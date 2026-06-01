@@ -154,22 +154,30 @@ class RagEngine:
     async def _rewrite_query(self, query: str) -> dict:
         """
         Trả về:
-          rewritten_query — semantic search string
+          rewritten_query — structured search string mirroring ChromaDB doc format
           excluded_titles — anime cần loại khỏi kết quả
         """
-        prompt = f"""You are an anime search assistant.
+        prompt = f"""You are an anime search assistant. Analyze the user query and extract structured fields.
+
 User query: "{query}"
 
-Tasks:
-1. Extract any specific anime titles the user wants to find SIMILAR anime to.
-2. Rewrite the query into a rich semantic search string describing genres, themes,
-   plot elements, mood, tone. Do NOT include the extracted titles in the rewrite.
+1. Extract any specific anime titles the user wants to find SIMILAR anime to -> excluded_titles.
+2. Fill each field below. Be specific; use terms that appear in anime databases.
 
-Respond ONLY with JSON (no markdown):
+Respond ONLY with valid JSON, no markdown:
 {{
-  "rewritten_query": "...",
-  "excluded_titles": ["title1"]
-}}"""
+  "excluded_titles": [],
+  "genres": "comma-separated genres, e.g. Action, Adventure, Fantasy",
+  "tags": "comma-separated tags, e.g. Isekai, Overpowered Protagonist, Magic System",
+  "setting": "e.g. fantasy world, post-apocalyptic city, high school, outer space",
+  "mood": "e.g. dark and gritty, wholesome, epic, comedic, melancholic",
+  "themes": "e.g. redemption, friendship, war, survival, romance, coming-of-age",
+  "plot_elements": "e.g. transported to another world, robot pilots, detective mystery, tournament arc",
+  "similar_to": "comma-separated well-known anime titles with a similar feel (not the excluded ones)",
+  "synopsis_keywords": "vivid descriptive phrases that would appear in a matching anime synopsis"
+}}
+
+Leave a field as empty string if not applicable."""
 
         try:
             response = self.genai.models.generate_content(
@@ -178,14 +186,41 @@ Respond ONLY with JSON (no markdown):
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     temperature=0.1,
-                    max_output_tokens=512,
+                    max_output_tokens=600,
                 ),
             )
             raw  = _safe_text(response)
             data = _parse_json_response(raw, {})
+
+            excluded = data.get("excluded_titles") or []
+
+            # Build a structured search string that mirrors the ChromaDB document format.
+            # Documents are stored as:  genres: X \n tags: Y \n similar_to: Z \n synopsis: ...
+            # Matching this structure puts the query embedding in the same vector space.
+            parts = []
+            if data.get("genres"):
+                parts.append(f"genres: {data['genres']}")
+            if data.get("tags"):
+                parts.append(f"tags: {data['tags']}")
+            if data.get("setting"):
+                parts.append(f"setting: {data['setting']}")
+            if data.get("mood"):
+                parts.append(f"mood: {data['mood']}")
+            if data.get("themes"):
+                parts.append(f"themes: {data['themes']}")
+            if data.get("plot_elements"):
+                parts.append(f"plot_elements: {data['plot_elements']}")
+            if data.get("similar_to"):
+                parts.append(f"similar_to: {data['similar_to']}")
+            if data.get("synopsis_keywords"):
+                parts.append(f"synopsis: {data['synopsis_keywords']}")
+
+            rewritten = "\n".join(parts) if parts else query
+            log.info("Structured rewrite:\n%s", rewritten)
+
             return {
-                "rewritten_query": data.get("rewritten_query") or query,
-                "excluded_titles": data.get("excluded_titles") or [],
+                "rewritten_query": rewritten,
+                "excluded_titles": excluded,
             }
         except Exception as e:
             log.warning("Query rewrite failed: %s", e)
@@ -278,7 +313,7 @@ Respond ONLY with JSON:
   ]
 }}
 
-recommendations: top picks (max 10). all_retrieved: ALL {n} anime in order."""
+recommendations: You MUST include EXACTLY {n} entries — rank ALL {n} retrieved anime from best to worst match. Do NOT skip or omit any. all_retrieved: ALL {n} anime in the same order."""
 
         fallback = {
             "message": "Could not generate answer.",
