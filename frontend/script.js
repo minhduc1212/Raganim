@@ -1,6 +1,9 @@
 // ── Config ────────────────────────────────────────────────
-const API   = 'http://127.0.0.1:8000';
-const TOP_K = 10;
+const API_BASE = 'https://thapnhi-raganim-api.hf.space';
+const API      = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
+const TOP_K    = 10;
+
+// to run locally, set API to 'http://localhost:8000'
 
 // ── Health check ─────────────────────────────────────────
 async function checkHealth() {
